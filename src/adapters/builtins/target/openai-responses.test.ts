@@ -1845,6 +1845,80 @@ describe('openAIResponsesTargetAdapter', () => {
     ]);
   });
 
+  it('preserves Anthropic tool references when targeting OpenAI chat', () => {
+    const parsed = parseAnthropicMessagesRequest({
+      model: 'claude-sonnet-4-5',
+      max_tokens: 128,
+      messages: [
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'toolu_search',
+              name: 'ToolSearch',
+              input: { query: 'calendar' }
+            }
+          ]
+        },
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'toolu_search',
+              content: [{ type: 'tool_reference', tool_name: 'calendar_create' }]
+            }
+          ]
+        }
+      ]
+    });
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) {
+      return;
+    }
+
+    const built = openAIResponsesTargetAdapter.buildRequestFromStandard({
+      request: { headers: {} } as never,
+      standardRequest: parsed.value,
+      config: {
+        openaiApiKey: 'sk-test',
+        openaiBaseUrl: 'https://mock.local/v1'
+      } as never,
+      targetProviderConfig: {
+        type: 'openai_chat_completions'
+      } as never
+    });
+
+    expect(built.ok).toBe(true);
+    if (!built.ok) {
+      return;
+    }
+
+    expect((built.value.body as Record<string, unknown>).messages).toEqual([
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          {
+            id: 'toolu_search',
+            type: 'function',
+            function: {
+              name: 'ToolSearch',
+              arguments: '{"query":"calendar"}'
+            }
+          }
+        ]
+      },
+      {
+        role: 'tool',
+        tool_call_id: 'toolu_search',
+        content: '[{"type":"tool_reference","tool_name":"calendar_create"}]'
+      }
+    ]);
+  });
+
   it('flattens OpenAI Responses namespace tools when targeting OpenAI chat', () => {
     const parsed = parseOpenAIResponsesRequest({
       model: 'gpt-5.4',
@@ -2191,6 +2265,9 @@ describe('openAIResponsesTargetAdapter', () => {
     ]);
     expect(JSON.stringify(body.input)).not.toContain('tool_search_call');
     expect(JSON.stringify(body.input)).not.toContain('tool_search_output');
+    expect(JSON.stringify(body.input)).toContain(
+      '[{\\"type\\":\\"tool_reference\\",\\"tool_name\\":\\"calendar_create\\"}]'
+    );
   });
 
   it('falls back atomically when deferred tool definitions are ambiguous', () => {
@@ -2449,7 +2526,7 @@ describe('openAIResponsesTargetAdapter', () => {
       {
         type: 'function_call_output',
         call_id: 'search_after_call',
-        output: ''
+        output: '[{"type":"tool_reference","tool_name":"calendar_create"}]'
       }
     ]);
   });
